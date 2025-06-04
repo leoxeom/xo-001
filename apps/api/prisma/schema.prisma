@@ -1,0 +1,518 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema", "fullTextSearch", "postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [citext, pgcrypto]
+}
+
+// ====== MULTI-TENANT ARCHITECTURE ======
+
+model Tenant {
+  id                String              @id @default(uuid())
+  name              String
+  subdomain         String              @unique
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  isActive          Boolean             @default(true)
+  plan              SubscriptionPlan    @default(FREE)
+  billingEmail      String?
+  logoUrl           String?
+  primaryColor      String              @default("#3B82F6") // Couleur bleue par défaut
+  secondaryColor    String              @default("#1E40AF")
+  organizations     Organization[]
+  modules           ModuleActivation[]
+  customDomains     CustomDomain[]
+  subscriptionEndsAt DateTime?
+
+  @@map("tenants")
+  @@index([subdomain])
+}
+
+model CustomDomain {
+  id        String   @id @default(uuid())
+  domain    String   @unique
+  isVerified Boolean  @default(false)
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("custom_domains")
+}
+
+// ====== ORGANIZATIONS & USERS ======
+
+model Organization {
+  id          String        @id @default(uuid())
+  name        String
+  description String?
+  logoUrl     String?
+  website     String?
+  address     String?
+  city        String?
+  zipCode     String?
+  country     String?
+  phone       String?
+  email       String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  tenantId    String
+  tenant      Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  users       User[]
+  teams       Team[]
+  events      Event[]
+  locations   Location[]
+  roles       Role[]
+
+  @@map("organizations")
+  @@index([tenantId])
+}
+
+model User {
+  id                String        @id @default(uuid())
+  email             String
+  passwordHash      String?
+  firstName         String?
+  lastName          String?
+  phone             String?
+  isActive          Boolean       @default(true)
+  lastLogin         DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  organizationId    String
+  organization      Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  profile           Profile?
+  roleAssignments   RoleAssignment[]
+  managedTeams      Team[]        @relation("TeamManager")
+  teamMemberships   TeamMember[]
+  eventAssignments  EventAssignment[]
+  absences          Absence[]
+  notifications     Notification[]
+  deviceTokens      DeviceToken[]
+  lifeEvents        LifeEvent[]
+  createdEvents     Event[]       @relation("EventCreator")
+  comments          Comment[]
+
+  @@unique([email, organizationId])
+  @@map("users")
+  @@index([organizationId])
+  @@index([email])
+}
+
+model Profile {
+  id                String   @id @default(uuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  avatarUrl         String?
+  bio               String?
+  jobTitle          String?
+  specialties       String[] // Compétences/spécialités (son, lumière, etc.)
+  socialSecurityNum String?  @db.VarChar(255) // Numéro de sécurité sociale (chiffré)
+  congeSpectaclesId String?  // ID Congés Spectacles pour intermittents
+  medicalCheckDate  DateTime? // Date de visite médicale
+  birthDate         DateTime?
+  address           String?
+  city              String?
+  zipCode           String?
+  country           String?
+  emergencyContact  String?
+  emergencyPhone    String?
+  preferences       Json?    // Préférences utilisateur (JSON)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("profiles")
+}
+
+// ====== PERMISSIONS & ROLES ======
+
+model Role {
+  id              String           @id @default(uuid())
+  name            String
+  description     String?
+  isSystemRole    Boolean          @default(false)
+  organizationId  String
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  permissions     Permission[]
+  roleAssignments RoleAssignment[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@unique([name, organizationId])
+  @@map("roles")
+  @@index([organizationId])
+}
+
+model Permission {
+  id          String   @id @default(uuid())
+  action      String   // create:event, read:event, etc.
+  subject     String   // event, user, team, etc.
+  conditions  Json?    // Conditions spécifiques (JSON)
+  description String?
+  roles       Role[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([action, subject])
+  @@map("permissions")
+}
+
+model RoleAssignment {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleId    String
+  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, roleId])
+  @@map("role_assignments")
+  @@index([userId])
+  @@index([roleId])
+}
+
+// ====== MODULES ACTIVATION ======
+
+model ModuleActivation {
+  id        String      @id @default(uuid())
+  moduleType ModuleType
+  isActive  Boolean     @default(true)
+  settings   Json?      // Configuration spécifique au module
+  tenantId   String
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  @@unique([moduleType, tenantId])
+  @@map("module_activations")
+  @@index([tenantId])
+}
+
+// ====== TEAMS & ASSIGNMENTS ======
+
+model Team {
+  id             String       @id @default(uuid())
+  name           String
+  description    String?
+  color          String?      // Couleur d'affichage de l'équipe
+  managerId      String
+  manager        User         @relation("TeamManager", fields: [managerId], references: [id])
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  members        TeamMember[]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@map("teams")
+  @@index([organizationId])
+  @@index([managerId])
+}
+
+model TeamMember {
+  id        String   @id @default(uuid())
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  joinedAt  DateTime @default(now())
+  role      String?  // Rôle au sein de l'équipe
+
+  @@unique([teamId, userId])
+  @@map("team_members")
+  @@index([teamId])
+  @@index([userId])
+}
+
+// ====== EVENTS (BASE COMMUNE) ======
+
+model Event {
+  id              String           @id @default(uuid())
+  title           String
+  description     String?
+  startDate       DateTime
+  endDate         DateTime
+  allDay          Boolean          @default(false)
+  status          EventStatus      @default(DRAFT)
+  type            EventType
+  creatorId       String
+  creator         User             @relation("EventCreator", fields: [creatorId], references: [id])
+  organizationId  String
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  locationId      String?
+  location        Location?        @relation(fields: [locationId], references: [id])
+  assignments     EventAssignment[]
+  comments        Comment[]
+  customFields    Json?            // Champs personnalisés spécifiques au type d'événement
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  // Champs spécifiques pour STAGEPLANNER
+  technicalDetails Json?           // Détails techniques (son, lumière, etc.)
+  setupTime       DateTime?        // Début du montage
+  soundcheckTime  DateTime?        // Début de la balance
+  doorsTime       DateTime?        // Ouverture des portes
+  showTime        DateTime?        // Début du spectacle
+  // Champs spécifiques pour BARPLANNER
+  expectedRevenue Decimal?         @db.Decimal(10, 2)
+  minimumStaff    Int?
+  // Champs spécifiques pour CLEANPLANNER
+  cleaningZones   Json?            // Zones à nettoyer
+  // Champs spécifiques pour SECUREPLANNER
+  securityLevel   SecurityLevel?
+  // Champs spécifiques pour FESTIVALPLANNER
+  parentEventId   String?          // Pour les événements imbriqués (sous-événements d'un festival)
+  isRecurring     Boolean          @default(false)
+  recurrenceRule  String?          // Règle de récurrence (format iCal)
+
+  @@map("events")
+  @@index([organizationId])
+  @@index([creatorId])
+  @@index([startDate, endDate])
+  @@index([type])
+  @@index([status])
+}
+
+model EventAssignment {
+  id             String           @id @default(uuid())
+  eventId        String
+  event          Event            @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User             @relation(fields: [userId], references: [id])
+  role           String           // Rôle dans l'événement
+  status         AssignmentStatus @default(PROPOSED)
+  hourlyRate     Decimal?         @db.Decimal(10, 2)
+  flatRate       Decimal?         @db.Decimal(10, 2)
+  startTime      DateTime?        // Début spécifique (si différent de l'événement)
+  endTime        DateTime?        // Fin spécifique (si différent de l'événement)
+  notes          String?
+  responseDate   DateTime?        // Date de réponse de l'utilisateur
+  validationDate DateTime?        // Date de validation par le manager
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@unique([eventId, userId])
+  @@map("event_assignments")
+  @@index([eventId])
+  @@index([userId])
+  @@index([status])
+}
+
+model Location {
+  id             String   @id @default(uuid())
+  name           String
+  address        String?
+  city           String?
+  zipCode        String?
+  country        String?
+  capacity       Int?
+  contactName    String?
+  contactEmail   String?
+  contactPhone   String?
+  notes          String?
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  events         Event[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("locations")
+  @@index([organizationId])
+}
+
+// ====== ABSENCES & REMPLACEMENTS ======
+
+model Absence {
+  id             String        @id @default(uuid())
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startDate      DateTime
+  endDate        DateTime
+  type           AbsenceType
+  status         AbsenceStatus @default(PENDING)
+  reason         String?
+  documentation  String?       // URL vers un document justificatif
+  replacementId  String?       // ID de l'utilisateur remplaçant
+  validatedById  String?       // ID du manager qui a validé
+  validatedAt    DateTime?     // Date de validation
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@map("absences")
+  @@index([userId])
+  @@index([startDate, endDate])
+  @@index([status])
+}
+
+// ====== LIFEPLANNER ======
+
+model LifeEvent {
+  id          String       @id @default(uuid())
+  userId      String
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  startDate   DateTime
+  endDate     DateTime
+  allDay      Boolean      @default(false)
+  location    String?
+  type        LifeEventType
+  isPrivate   Boolean      @default(false)
+  reminderAt  DateTime?
+  color       String?      // Couleur personnalisée
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@map("life_events")
+  @@index([userId])
+  @@index([startDate, endDate])
+}
+
+// ====== NOTIFICATIONS ======
+
+model Notification {
+  id          String           @id @default(uuid())
+  userId      String
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  body        String
+  type        NotificationType
+  isRead      Boolean          @default(false)
+  data        Json?            // Données supplémentaires (lien, ID, etc.)
+  createdAt   DateTime         @default(now())
+
+  @@map("notifications")
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+model DeviceToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  platform  Platform
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("device_tokens")
+  @@index([userId])
+}
+
+// ====== COMMENTS ======
+
+model Comment {
+  id        String   @id @default(uuid())
+  content   String
+  eventId   String
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("comments")
+  @@index([eventId])
+  @@index([userId])
+}
+
+// ====== ENUMERATIONS ======
+
+enum SubscriptionPlan {
+  FREE
+  STARTER
+  PRO
+  ENTERPRISE
+}
+
+enum ModuleType {
+  STAGEPLANNER
+  BARPLANNER
+  CLEANPLANNER
+  SECUREPLANNER
+  COMMERCANTSPLANNER
+  FESTIVALPLANNER
+  LIFEPLANNER
+}
+
+enum EventStatus {
+  DRAFT
+  PUBLISHED
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+enum EventType {
+  STAGE_EVENT
+  BAR_SHIFT
+  CLEANING_TASK
+  SECURITY_SHIFT
+  APPOINTMENT
+  FESTIVAL
+  PERSONAL
+}
+
+enum AssignmentStatus {
+  PROPOSED
+  AVAILABLE
+  UNAVAILABLE
+  UNCERTAIN
+  VALIDATED
+  NOT_RETAINED
+}
+
+enum AbsenceType {
+  VACATION
+  SICK_LEAVE
+  PERSONAL_LEAVE
+  TRAINING
+  OTHER
+}
+
+enum AbsenceStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum SecurityLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum LifeEventType {
+  PERSONAL
+  WORK
+  FAMILY
+  HEALTH
+  TRAVEL
+  OTHER
+}
+
+enum NotificationType {
+  EVENT_INVITATION
+  EVENT_UPDATE
+  EVENT_REMINDER
+  ASSIGNMENT_STATUS
+  ABSENCE_REQUEST
+  ABSENCE_RESPONSE
+  TEAM_UPDATE
+  SYSTEM
+}
+
+enum Platform {
+  IOS
+  ANDROID
+  WEB
+}
