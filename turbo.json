@@ -4,13 +4,7 @@
   "pipeline": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", ".next/**", "build/**"],
-      "cache": true
-    },
-    "test": {
-      "dependsOn": ["^build"],
-      "outputs": ["coverage/**"],
-      "cache": true
+      "outputs": [".next/**", "!.next/cache/**", "dist/**"]
     },
     "lint": {
       "outputs": []
@@ -19,34 +13,41 @@
       "cache": false,
       "persistent": true
     },
+    "start": {
+      "cache": false,
+      "persistent": true
+    },
     "clean": {
       "cache": false
     },
-    "start": {
+    "test": {
       "dependsOn": ["build"],
-      "cache": false
+      "outputs": ["coverage/**"],
+      "inputs": ["src/**/*.tsx", "src/**/*.ts", "test/**/*.ts", "test/**/*.tsx"]
     },
-    "db:migrate": {
-      "cache": false
+    "web#build": {
+      "dependsOn": ["^build"],
+      "outputs": [".next/**", "!.next/cache/**"]
     },
-    "db:seed": {
-      "cache": false
+    "web#dev": {
+      "cache": false,
+      "persistent": true,
+      "dependsOn": ["api#dev"]
+    },
+    "api#dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "format": {
+      "outputs": []
+    },
+    "deploy:staging": {
+      "dependsOn": ["build", "test", "lint"],
+      "outputs": []
+    },
+    "deploy:prod": {
+      "dependsOn": ["build", "test", "lint"],
+      "outputs": []
     }
-  },
-  "globalEnv": [
-    "NODE_ENV",
-    "DATABASE_URL",
-    "JWT_SECRET",
-    "PORT",
-    "API_URL",
-    "NEXT_PUBLIC_API_URL",
-    "OPENAI_API_KEY",
-    "FIREBASE_API_KEY",
-    "FIREBASE_APP_ID",
-    "FIREBASE_AUTH_DOMAIN",
-    "FIREBASE_PROJECT_ID",
-    "FIREBASE_STORAGE_BUCKET",
-    "FIREBASE_MESSAGING_SENDER_ID",
-    "FIREBASE_MEASUREMENT_ID"
-  ]
+  }
 }
